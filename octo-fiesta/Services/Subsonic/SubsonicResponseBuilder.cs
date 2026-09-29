@@ -358,6 +358,31 @@ public class SubsonicResponseBuilder
     }
 
     /// <summary>
+    /// Where an external item comes from, added to responses as "externalProvider" (the "suffix" stays the
+    /// "Remote" marker): the provider ("AppleMusic"), plus the upstream source when the id names one
+    /// ("apple~123" gives "GDStudio-Apple"). Null for local items.
+    /// </summary>
+    private static string? ExternalOrigin(bool isLocal, string? provider, string? externalId)
+    {
+        if (isLocal || string.IsNullOrEmpty(provider)) return null;
+        var origin = Enum.TryParse<octo_fiesta.Models.Settings.MusicService>(provider, ignoreCase: true, out var service)
+            ? service.ToString() : provider;
+        if (externalId is { } id && id.IndexOf('~') is > 0 and var tilde)
+            origin += "-" + char.ToUpperInvariant(id[0]) + id[1..tilde];
+        return origin;
+    }
+
+    private static void AddOrigin(Dictionary<string, object> json, bool isLocal, string? provider, string? externalId = null)
+    {
+        if (ExternalOrigin(isLocal, provider, externalId) is { } origin) json["externalProvider"] = origin;
+    }
+
+    private static void SetOrigin(XElement element, bool isLocal, string? provider, string? externalId = null)
+    {
+        if (ExternalOrigin(isLocal, provider, externalId) is { } origin) element.SetAttributeValue("externalProvider", origin);
+    }
+
+    /// <summary>
     /// Converts a Song domain model to Subsonic JSON format.
     /// </summary>
     public Dictionary<string, object> ConvertSongToJson(Song song)
@@ -441,6 +466,7 @@ public class SubsonicResponseBuilder
             result["created"] = created;
         }
 
+        AddOrigin(result, song.IsLocal, song.ExternalProvider, song.ExternalId);
         return result;
     }
 
@@ -470,6 +496,7 @@ public class SubsonicResponseBuilder
             result["coverArt"] = album.Id;
         }
 
+        AddOrigin(result, album.IsLocal, album.ExternalProvider);
         return result;
     }
 
@@ -492,6 +519,7 @@ public class SubsonicResponseBuilder
             result["coverArt"] = artist.Id;
         }
 
+        AddOrigin(result, artist.IsLocal, artist.ExternalProvider);
         return result;
     }
 
@@ -588,6 +616,7 @@ public class SubsonicResponseBuilder
             songElement.Add(new XAttribute("created", created));
         }
 
+        SetOrigin(songElement, song.IsLocal, song.ExternalProvider, song.ExternalId);
         return songElement;
     }
 
@@ -623,6 +652,7 @@ public class SubsonicResponseBuilder
             element.Add(new XAttribute("genre", album.Genre));
         }
 
+        SetOrigin(element, album.IsLocal, album.ExternalProvider);
         return element;
     }
 
@@ -644,6 +674,7 @@ public class SubsonicResponseBuilder
             element.Add(new XAttribute("coverArt", artist.Id));
         }
 
+        SetOrigin(element, artist.IsLocal, artist.ExternalProvider);
         return element;
     }
 
