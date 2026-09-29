@@ -60,6 +60,57 @@ public class GDStudioMetadataService : IMusicMetadataService
     // site's signing script), so it gets three times the normal timeout.
     private readonly ConcurrentDictionary<string, byte> _warmed = new();
 
+    // The API rate limits (about 50 requests per 5 minutes, then 503/429), and a client that opens an
+    // artist page asks for every album at once. So: identical queries are shared and remembered for a
+    // few minutes (in flight or done, never failures), at most MaxParallel run at a time, and a 503/429
+    // is retried once after a short pause.
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
+    private const int MaxParallel = 4;
+    private readonly SemaphoreSlim _gate = new(MaxParallel);
+    // ponytail: unbounded like the maps above, add eviction if it ever matters
+    private readonly ConcurrentDictionary<string, (DateTime At, Task<List<GDStudioTrack>> Task)> _queryCache = new();
+
+    private Task<List<GDStudioTrack>> Fetch(string api, string name, int count, TimeSpan timeout)
+    {
+        var key = $"{api}\n{count}\n{name}";
+        if (_queryCache.TryGetValue(key, out var hit) && DateTime.UtcNow - hit.At < CacheTtl
+            && !hit.Task.IsFaulted && !hit.Task.IsCanceled)
+            return hit.Task;
+
+        var entry = (At: DateTime.UtcNow, Task: FetchCore(api, name, count, timeout));
+        _queryCache[key] = entry;
+        _ = entry.Task.ContinueWith(t => { if (t.IsFaulted || t.IsCanceled) _queryCache.TryRemove(new KeyValuePair<string, (DateTime, Task<List<GDStudioTrack>>)>(key, entry)); },
+            TaskScheduler.Default);
+        return entry.Task;
+    }
+
+    private async Task<List<GDStudioTrack>> FetchCore(string api, string name, int count, TimeSpan timeout)
+    {
+        var url = _s.Url($"types=search&source={Uri.EscapeDataString(api)}"
+                  + $"&name={Uri.EscapeDataString(name)}&count={count}");
+        // Time spent queued for a slot does not count against the request timeout, only the request and its retry do
+        using (var queue = new CancellationTokenSource(TimeSpan.FromSeconds(60)))
+            await _gate.WaitAsync(queue.Token);
+        try
+        {
+            using var cts = new CancellationTokenSource(timeout);
+            for (var attempt = 0; ; attempt++)
+            {
+                using var response = await _http.GetAsync(url, cts.Token);
+                if (attempt == 0 && response.StatusCode is System.Net.HttpStatusCode.ServiceUnavailable or System.Net.HttpStatusCode.TooManyRequests)
+                {
+                    var pause = response.Headers.RetryAfter?.Delta is { } d && d < TimeSpan.FromSeconds(3) ? d : TimeSpan.FromSeconds(1);
+                    _logger.LogWarning("GDStudio {Source} '{Query}' got {Status}, retrying once in {Ms} ms", api, name, (int)response.StatusCode, (int)pause.TotalMilliseconds);
+                    await Task.Delay(pause, cts.Token);
+                    continue;
+                }
+                response.EnsureSuccessStatusCode();
+                return await response.Content.ReadFromJsonAsync<List<GDStudioTrack>>(cts.Token) ?? [];
+            }
+        }
+        finally { _gate.Release(); }
+    }
+
     // Queries every configured source in parallel (`suffix` selects e.g. "_album") and interleaves
     // the results so each source is represented. A failing or timed-out source is logged and skipped.
     private async Task<List<GDStudioTrack>> QueryAsync(string name, int count, string suffix = "")
@@ -69,13 +120,10 @@ public class GDStudioMetadataService : IMusicMetadataService
         {
             var api = source + suffix; // what the API sees, e.g. netease_album
             var seconds = _warmed.TryAdd(api, 0) ? _s.TimeoutSeconds * 3 : _s.TimeoutSeconds;
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(seconds));
             var watch = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                var url = _s.Url($"types=search&source={Uri.EscapeDataString(api)}"
-                          + $"&name={Uri.EscapeDataString(name)}&count={count}");
-                var results = await _http.GetFromJsonAsync<List<GDStudioTrack>>(url, cts.Token) ?? [];
+                var results = await Fetch(api, name, count, TimeSpan.FromSeconds(seconds));
                 _logger.LogInformation("GDStudio {Source} '{Query}' (count={Count}) -> {Results} results in {Ms} ms",
                     api, name, count, results.Count, watch.ElapsedMilliseconds);
                 return results.Where(t => !string.IsNullOrEmpty(t.Id))
@@ -137,14 +185,15 @@ public class GDStudioMetadataService : IMusicMetadataService
     {
         if (externalProvider != ProviderName) return null;
         var (name, artist) = SplitAlbumKey(externalId);
-        // The album search alone can miss the exact album (it returns the tracks of the best few matches),
-        // so it is combined with a track search for "<artist> <album>", then narrowed to this exact album.
-        var found = await Task.WhenAll(
-            QueryAsync(name, MaxCount, "_album"),
-            QueryAsync(artist is null ? name : $"{artist} {name}", MaxCount));
         var cached = _albumTracks.TryGetValue(externalId, out var seen) ? seen : [];
-        var tracks = found.SelectMany(l => l).Concat(cached).DistinctBy(t => t.Id)
-            .Where(t => t.Album == name && (artist is null || t.Artist.FirstOrDefault() == artist)).ToList();
+        bool IsThisAlbum(GDStudioTrack t) => t.Album == name && (artist is null || t.Artist.FirstOrDefault() == artist);
+        // One album search per source (results are shared and remembered, see Fetch), plus what earlier searches
+        // already showed for this album...
+        var tracks = (await QueryAsync(name, MaxCount, "_album")).Concat(cached).DistinctBy(t => t.Id).Where(IsThisAlbum).ToList();
+        // ...and only when that finds nothing (the album search returns just the best few matches) a track
+        // search for "<artist> <album>", to keep the request count down.
+        if (tracks.Count == 0)
+            tracks = (await QueryAsync(artist is null ? name : $"{artist} {name}", MaxCount)).Where(IsThisAlbum).ToList();
         if (tracks.Count == 0) return null;
         var songs = tracks.Select(ToSong).ToList();
         for (var i = 0; i < songs.Count; i++) { songs[i].Track = i + 1; songs[i].TotalTracks = songs.Count; }
