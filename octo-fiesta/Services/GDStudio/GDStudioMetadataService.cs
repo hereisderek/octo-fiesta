@@ -25,8 +25,12 @@ public class GDStudioMetadataService : IMusicMetadataService
     // ponytail: unbounded in-memory map, add eviction if search volume ever makes it matter
     private readonly ConcurrentDictionary<string, Song> _songs = new();
     private readonly ConcurrentDictionary<string, string> _pics = new();
-    // Tracks of albums seen in album searches, so opening one still works when a re-query misses it.
+    // Tracks seen per album (in any search), so opening an album still works when a re-query misses it.
     private readonly ConcurrentDictionary<string, List<GDStudioTrack>> _albumTracks = new();
+
+    private void RememberAlbum(string key, IEnumerable<GDStudioTrack> tracks)
+        => _albumTracks.AddOrUpdate(key, _ => tracks.ToList(),
+            (_, old) => old.Concat(tracks).DistinctBy(t => t.Id).ToList());
 
     public GDStudioMetadataService(
         IHttpClientFactory httpClientFactory,
@@ -112,7 +116,7 @@ public class GDStudioMetadataService : IMusicMetadataService
         var tracks = (await QueryAsync(name, count, suffix)).Where(t => filter?.Invoke(t) ?? true).ToList();
         return tracks.GroupBy(t => (t.Album, Artist: t.Artist.FirstOrDefault())).Where(g => g.Key.Album != "").Select(g =>
         {
-            _albumTracks[AlbumKey(g.Key.Album, g.Key.Artist)] = g.ToList();
+            RememberAlbum(AlbumKey(g.Key.Album, g.Key.Artist), g);
             return g;
         }).Select(g => new Album
         {
@@ -249,6 +253,7 @@ public class GDStudioMetadataService : IMusicMetadataService
             ExternalId = t.Id
         };
         _songs[t.Id] = song;
+        if (t.Album != "") RememberAlbum(AlbumKey(t.Album, t.Artist.FirstOrDefault()), [t]);
         if (!string.IsNullOrEmpty(t.PicId)) _pics[t.Id] = t.PicId;
         return song;
     }
