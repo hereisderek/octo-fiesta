@@ -47,16 +47,22 @@ public class GDStudioMetadataService : IMusicMetadataService
         return System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(s.PadRight(s.Length + (4 - s.Length % 4) % 4, '=')));
     }
 
+    // The first call to each source (+ suffix) may have to warm up a plugin (e.g. download and run the
+    // site's signing script), so it gets three times the normal timeout.
+    private readonly ConcurrentDictionary<string, byte> _warmed = new();
+
     // Queries every configured source in parallel (`suffix` selects e.g. "_album") and interleaves
     // the results so each source is represented. A failing or timed-out source is logged and skipped.
     private async Task<List<GDStudioTrack>> QueryAsync(string name, int count, string suffix = "")
     {
         async Task<List<GDStudioTrack>> One(string source)
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(_s.TimeoutSeconds));
+            var api = source + suffix; // what the API sees, e.g. netease_album
+            var seconds = _warmed.TryAdd(api, 0) ? _s.TimeoutSeconds * 3 : _s.TimeoutSeconds;
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(seconds));
             try
             {
-                var url = _s.Url($"types=search&source={Uri.EscapeDataString(source + suffix)}"
+                var url = _s.Url($"types=search&source={Uri.EscapeDataString(api)}"
                           + $"&name={Uri.EscapeDataString(name)}&count={count}");
                 var results = await _http.GetFromJsonAsync<List<GDStudioTrack>>(url, cts.Token) ?? [];
                 return results.Where(t => !string.IsNullOrEmpty(t.Id))
@@ -64,11 +70,11 @@ public class GDStudioMetadataService : IMusicMetadataService
             }
             catch (OperationCanceledException)
             {
-                _logger.LogError("GDStudio source '{Source}' timed out after {Seconds}s for '{Query}'", source, _s.TimeoutSeconds, name);
+                _logger.LogError("GDStudio source '{Source}' timed out after {Seconds}s for '{Query}'", api, seconds, name);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "GDStudio source '{Source}' failed for '{Query}'", source, name);
+                _logger.LogError(ex, "GDStudio source '{Source}' failed for '{Query}'", api, name);
             }
             return [];
         }
