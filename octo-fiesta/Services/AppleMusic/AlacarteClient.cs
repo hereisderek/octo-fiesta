@@ -104,6 +104,7 @@ public class AlacarteClient
     {
         if (!IsConfigured) return null;
         using var timeout = new CancellationTokenSource(LookupTimeout);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             using var response = await _http.GetAsync(path, timeout.Token);
@@ -114,6 +115,7 @@ public class AlacarteClient
                 _logger.LogWarning("alacarte {Path} failed ({Status}): {Error}", path, (int)response.StatusCode, ErrorMessage(body));
                 return null;
             }
+            _logger.LogInformation("alacarte {Path} -> {Status} in {Ms} ms", path, (int)response.StatusCode, watch.ElapsedMilliseconds);
             return JsonSerializer.Deserialize<T>(body, JsonOptions);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)

@@ -47,6 +47,9 @@ public class GDStudioMetadataService : IMusicMetadataService
         return System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(s.PadRight(s.Length + (4 - s.Length % 4) % 4, '=')));
     }
 
+    // The API answers 422 for count > 99.
+    private const int MaxCount = 99;
+
     // The first call to each source (+ suffix) may have to warm up a plugin (e.g. download and run the
     // site's signing script), so it gets three times the normal timeout.
     private readonly ConcurrentDictionary<string, byte> _warmed = new();
@@ -55,16 +58,20 @@ public class GDStudioMetadataService : IMusicMetadataService
     // the results so each source is represented. A failing or timed-out source is logged and skipped.
     private async Task<List<GDStudioTrack>> QueryAsync(string name, int count, string suffix = "")
     {
+        count = Math.Min(count, MaxCount);
         async Task<List<GDStudioTrack>> One(string source)
         {
             var api = source + suffix; // what the API sees, e.g. netease_album
             var seconds = _warmed.TryAdd(api, 0) ? _s.TimeoutSeconds * 3 : _s.TimeoutSeconds;
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(seconds));
+            var watch = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 var url = _s.Url($"types=search&source={Uri.EscapeDataString(api)}"
                           + $"&name={Uri.EscapeDataString(name)}&count={count}");
                 var results = await _http.GetFromJsonAsync<List<GDStudioTrack>>(url, cts.Token) ?? [];
+                _logger.LogInformation("GDStudio {Source} '{Query}' (count={Count}) -> {Results} results in {Ms} ms",
+                    api, name, count, results.Count, watch.ElapsedMilliseconds);
                 return results.Where(t => !string.IsNullOrEmpty(t.Id))
                     .Select(t => t with { Id = _s.TrackId(source, t.Id) }).ToList();
             }

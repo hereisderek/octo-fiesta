@@ -88,6 +88,8 @@ Run the login once: `docker compose run --rm octo-fiesta --tidal-login`.
 | `GDSTUDIO_API` | `GDStudio__Api` | `https://music-api.gdstudio.xyz/api.php` | API endpoint. |
 | `GDSTUDIO_PROXY` | `GDStudio__Proxy` | empty | `http://`, `https://` or `socks5://` proxy for API and downloads. |
 
+The flat names (`GDSTUDIO_SOURCE`, `GDSTUDIO_TIMEOUT_SECONDS`, `GDSTUDIO_BR`, `GDSTUDIO_API`, `GDSTUDIO_PROXY`) are also read when set directly on the container without Compose; the `GDStudio__*` form wins if both are set.
+
 With several sources, each is queried separately and in parallel (N sources means N requests per search, with no added delay) and the results are interleaved. A source that fails or exceeds the timeout is logged as an error and skipped; the rest still return. Track ids carry their source as `<source>~<id>`.
 
 If the requested `br` is unsupported or returns nothing, the next lower value is tried once (`999` falls back to `740` only; `128` has no fallback).
