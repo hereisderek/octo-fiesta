@@ -25,6 +25,8 @@ public class GDStudioMetadataService : IMusicMetadataService
     // ponytail: unbounded in-memory map, add eviction if search volume ever makes it matter
     private readonly ConcurrentDictionary<string, Song> _songs = new();
     private readonly ConcurrentDictionary<string, string> _pics = new();
+    // Tracks of albums seen in album searches, so opening one still works when a re-query misses it.
+    private readonly ConcurrentDictionary<string, List<GDStudioTrack>> _albumTracks = new();
 
     public GDStudioMetadataService(
         IHttpClientFactory httpClientFactory,
@@ -93,19 +95,34 @@ public class GDStudioMetadataService : IMusicMetadataService
     public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20)
         => (await QueryAsync(query, limit)).Select(ToSong).ToList();
 
+    // An album is identified by its name plus its first artist, so different releases that share a name
+    // (every artist has a "素颜") stay apart. Ids without an artist part are still understood.
+    private static string AlbumKey(string album, string? artist) => Enc(artist is null ? album : album + "\t" + artist);
+
+    private static (string Name, string? Artist) SplitAlbumKey(string encoded)
+    {
+        var text = Dec(encoded);
+        var i = text.IndexOf('\t');
+        return i < 0 ? (text, null) : (text[..i], text[(i + 1)..]);
+    }
+
     // `<source>_album` returns the tracks of albums matching the keyword.
     private async Task<List<Album>> AlbumsFromAsync(string suffix, string name, int count, Func<GDStudioTrack, bool>? filter = null)
     {
         var tracks = (await QueryAsync(name, count, suffix)).Where(t => filter?.Invoke(t) ?? true).ToList();
-        return tracks.GroupBy(t => t.Album).Where(g => g.Key != "").Select(g => new Album
+        return tracks.GroupBy(t => (t.Album, Artist: t.Artist.FirstOrDefault())).Where(g => g.Key.Album != "").Select(g =>
         {
-            Id = AlbumPrefix + Enc(g.Key),
-            Title = g.Key,
-            Artist = g.First().Artist.FirstOrDefault() ?? "",
-            ArtistId = g.First().Artist.Count > 0 ? ArtistPrefix + Enc(g.First().Artist[0]) : null,
+            _albumTracks[AlbumKey(g.Key.Album, g.Key.Artist)] = g.ToList();
+            return g;
+        }).Select(g => new Album
+        {
+            Id = AlbumPrefix + AlbumKey(g.Key.Album, g.Key.Artist),
+            Title = g.Key.Album,
+            Artist = g.Key.Artist ?? "",
+            ArtistId = g.Key.Artist is null ? null : ArtistPrefix + Enc(g.Key.Artist),
             SongCount = g.Count(),
             ExternalProvider = ProviderName,
-            ExternalId = Enc(g.Key)
+            ExternalId = AlbumKey(g.Key.Album, g.Key.Artist)
         }).ToList();
     }
 
@@ -115,8 +132,15 @@ public class GDStudioMetadataService : IMusicMetadataService
     public async Task<Album?> GetAlbumAsync(string externalProvider, string externalId)
     {
         if (externalProvider != ProviderName) return null;
-        var name = Dec(externalId);
-        var tracks = (await QueryAsync(name, 100, "_album")).Where(t => t.Album == name).ToList();
+        var (name, artist) = SplitAlbumKey(externalId);
+        // The album search alone can miss the exact album (it returns the tracks of the best few matches),
+        // so it is combined with a track search for "<artist> <album>", then narrowed to this exact album.
+        var found = await Task.WhenAll(
+            QueryAsync(name, MaxCount, "_album"),
+            QueryAsync(artist is null ? name : $"{artist} {name}", MaxCount));
+        var cached = _albumTracks.TryGetValue(externalId, out var seen) ? seen : [];
+        var tracks = found.SelectMany(l => l).Concat(cached).DistinctBy(t => t.Id)
+            .Where(t => t.Album == name && (artist is null || t.Artist.FirstOrDefault() == artist)).ToList();
         if (tracks.Count == 0) return null;
         var songs = tracks.Select(ToSong).ToList();
         for (var i = 0; i < songs.Count; i++) { songs[i].Track = i + 1; songs[i].TotalTracks = songs.Count; }
@@ -218,7 +242,7 @@ public class GDStudioMetadataService : IMusicMetadataService
             Artists = artists,
             ArtistId = artists.FirstOrDefault()?.Id,
             Album = t.Album,
-            AlbumId = t.Album == "" ? null : AlbumPrefix + Enc(t.Album),
+            AlbumId = t.Album == "" ? null : AlbumPrefix + AlbumKey(t.Album, t.Artist.FirstOrDefault()),
             AlbumArtist = t.Artist.FirstOrDefault(),
             IsLocal = false,
             ExternalProvider = ProviderName,
