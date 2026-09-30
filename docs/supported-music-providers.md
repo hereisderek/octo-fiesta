@@ -14,6 +14,6 @@ Set `MUSIC_SERVICE` to one provider, or to several separated by `,` (see [Multip
 
 ## Notes
 
-- **GDStudio** aggregates several upstream sources (`netease`, `joox`, ...). Albums and artists are derived from search results and identified by name. The API is rate limited (about 50 requests per 5 minutes), and each configured source counts as its own request.
+- **GDStudio** aggregates several upstream sources (`netease`, `joox`, `apple`, ...). Albums and artists are derived from search results and identified by name. The API is rate limited (about 50 requests per 5 minutes), and each configured source counts as its own request. Non-public sources like `apple` require request signing via the `gdstudio-proxy` plugin (`GDStudio__Plugin`), which computes the runtime signature.
 - **AppleMusic** needs octo-fiesta and alacarte to share the same music folder.
 - **SquidWTF** is deprecated: the upstream squid.wtf services are down. It remains for self-hosted Tidal instances.

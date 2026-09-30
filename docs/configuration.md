@@ -82,15 +82,18 @@ Run the login once: `docker compose run --rm octo-fiesta --tidal-login`.
 
 | `.env` | App setting | Default | Description |
 |---|---|---|---|
-| `GDSTUDIO_SOURCE` | `GDStudio__Source` | `netease` | Upstream source(s), comma separated, e.g. `netease,joox`. Not validated: any value the API accepts works. |
+| `GDSTUDIO_SOURCE` | `GDStudio__Source` | `netease` | Upstream source(s), comma separated, e.g. `netease,joox`, or `apple`. Any source the API accepts works. |
 | `GDSTUDIO_TIMEOUT_SECONDS` | `GDStudio__TimeoutSeconds` | `8` | Per-source timeout for search/metadata calls. The first call to each source gets 3x, for plugin warm-up. |
 | `GDSTUDIO_BR` | `GDStudio__Br` | `999` | Quality: `128`, `192`, `320`, `740` (16-bit lossless), `999` (24-bit lossless). |
 | `GDSTUDIO_API` | `GDStudio__Api` | `https://music-api.gdstudio.xyz/api.php` | API endpoint. |
 | `GDSTUDIO_PROXY` | `GDStudio__Proxy` | empty | `http://`, `https://` or `socks5://` proxy for API and downloads. |
+| `GDSTUDIO_PLUGIN` | `GDStudio__Plugin` | `/config/gdstudio/gdstudio-proxy.dll` | Optional path to an assembly providing signing handlers (e.g. for `apple` source). |
 
-The flat names (`GDSTUDIO_SOURCE`, `GDSTUDIO_TIMEOUT_SECONDS`, `GDSTUDIO_BR`, `GDSTUDIO_API`, `GDSTUDIO_PROXY`) are also read when set directly on the container without Compose; the `GDStudio__*` form wins if both are set.
+Both the flat names (`GDSTUDIO_SOURCE`, `GDSTUDIO_TIMEOUT_SECONDS`, `GDSTUDIO_BR`, `GDSTUDIO_API`, `GDSTUDIO_PROXY`, `GDSTUDIO_PLUGIN`) and double-underscore variants (`GDSTUDIO__SOURCE`, `GDSTUDIO__TIMEOUT_SECONDS`, etc.) are recognized when set directly on the container; the `GDStudio__*` form wins if both are set.
 
 With several sources, each is queried separately and in parallel (N sources means N requests per search, with no added delay) and the results are interleaved. A source that fails or exceeds the timeout is logged as an error and skipped; the rest still return. Track ids carry their source as `<source>~<id>`.
+
+When using the `apple` source, upstream responses return Romanized/English metadata for localized searches (e.g. "Jay Chou" for "周杰伦"). Octo-fiesta preserves the queried artist name and correlates multi-artist collaboration credits so client-side and server-side filters retain the results. Relative audio download paths returned by GDStudio are automatically resolved against the site origin.
 
 If the requested `br` is unsupported or returns nothing, the next lower value is tried once (`999` falls back to `740` only; `128` has no fallback).
 
