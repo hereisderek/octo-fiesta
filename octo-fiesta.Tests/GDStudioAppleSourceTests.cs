@@ -1,6 +1,8 @@
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -142,6 +144,48 @@ public class GDStudioAppleSourceTests
             if (Directory.Exists(testDownloadPath))
             {
                 try { Directory.Delete(testDownloadPath, true); } catch { }
+            }
+        }
+    }
+
+    [Fact]
+    public void MergedPlugin_LoadsAndExecutesSuccessfully_WithoutLooseDependencies()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "plugin-single-test-" + Guid.NewGuid());
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var singleDllPath = Path.Combine(tempDir, "gdstudio-proxy.dll");
+            var sourceDll = "/Volumes/private/workspace/my-lab/saltbox_mod/roles/octo_fiesta/files/gdstudio-proxy-apple/dist/gdstudio-proxy.dll";
+            if (!File.Exists(sourceDll)) return;
+            File.Copy(sourceDll, singleDllPath);
+
+            var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+            services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
+            services.AddLogging();
+            var builder = services.AddHttpClient("TestClient");
+            builder.AddOptionalHandlers(singleDllPath);
+
+            var sp = services.BuildServiceProvider();
+            var client = sp.GetRequiredService<IHttpClientFactory>().CreateClient("TestClient");
+            Assert.NotNull(client);
+
+            // Also verify Jint engine can execute inside the merged assembly
+            var alc = new System.Runtime.Loader.AssemblyLoadContext("TestAlc", isCollectible: true);
+            var asm = alc.LoadFromAssemblyPath(singleDllPath);
+            var engineType = asm.GetType("Jint.Engine");
+            Assert.NotNull(engineType);
+            dynamic engine = Activator.CreateInstance(engineType)!;
+            engine.Execute("function add(a, b) { return a + b; }");
+            var result = engine.Invoke("add", 10, 20);
+            Assert.Equal("30", result.ToString());
+            alc.Unload();
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                try { Directory.Delete(tempDir, true); } catch { }
             }
         }
     }
