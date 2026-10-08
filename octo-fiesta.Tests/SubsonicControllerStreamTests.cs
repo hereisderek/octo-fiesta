@@ -172,4 +172,63 @@ public class SubsonicControllerStreamTests
             x => x.DownloadAndStreamAsync("deezer", "123", It.Is<CancellationToken>(t => t.IsCancellationRequested)),
             Times.Once);
     }
+
+    [Fact]
+    public async Task Download_WithExternalSong_UsesLinkedCancelableTokenForDownload()
+    {
+        var localLibraryServiceMock = new Mock<ILocalLibraryService>();
+        localLibraryServiceMock
+            .Setup(x => x.ParseSongId(It.IsAny<string>()))
+            .Returns((true, "deezer", "123"));
+
+        var downloadServiceMock = new Mock<IDownloadService>();
+        CancellationToken capturedToken = default;
+        downloadServiceMock
+            .Setup(x => x.DownloadAndStreamAsync("deezer", "123", It.IsAny<CancellationToken>()))
+            .Callback<string, string, CancellationToken>((_, _, token) => capturedToken = token)
+            .ReturnsAsync(((Stream)new MemoryStream([1, 2, 3]), "song.mp3"));
+
+        var appStoppingCts = new CancellationTokenSource();
+        var hostLifetimeMock = new Mock<IHostApplicationLifetime>();
+        hostLifetimeMock.SetupGet(x => x.ApplicationStopping).Returns(appStoppingCts.Token);
+
+        var controller = CreateController(
+            localLibraryServiceMock,
+            downloadServiceMock,
+            hostLifetimeMock.Object,
+            CancellationToken.None);
+
+        var result = await controller.Download();
+
+        Assert.IsType<FileStreamResult>(result);
+        Assert.True(capturedToken.CanBeCanceled);
+    }
+
+    [Theory]
+    [InlineData("01 - Song.flac", "audio/flac")]
+    [InlineData("01 - Song.m4a", "audio/mp4")]
+    [InlineData("01 - Song.mp3", "audio/mpeg")]
+    public async Task Download_SetsContentTypeFromDownloadedFileExtension(string filePath, string expectedContentType)
+    {
+        var localLibraryServiceMock = new Mock<ILocalLibraryService>();
+        localLibraryServiceMock
+            .Setup(x => x.ParseSongId(It.IsAny<string>()))
+            .Returns((true, "deezer", "123"));
+
+        var downloadServiceMock = new Mock<IDownloadService>();
+        downloadServiceMock
+            .Setup(x => x.DownloadAndStreamAsync("deezer", "123", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(((Stream)new MemoryStream([1, 2, 3]), filePath));
+
+        var controller = CreateController(
+            localLibraryServiceMock,
+            downloadServiceMock,
+            new Mock<IHostApplicationLifetime>().Object,
+            CancellationToken.None);
+
+        var result = await controller.Download();
+
+        var fileResult = Assert.IsType<FileStreamResult>(result);
+        Assert.Equal(expectedContentType, fileResult.ContentType);
+    }
 }

@@ -171,7 +171,8 @@ public class SubsonicProxyService
     /// </summary>
     public async Task<IActionResult> RelayStreamAsync(
         Dictionary<string, string> parameters,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string endpoint = "rest/stream")
     {
         try
         {
@@ -190,7 +191,8 @@ public class SubsonicProxyService
 
             var query = string.Join("&", parameters.Select(kv => 
                 $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
-            var url = $"{_subsonicSettings.Url}/rest/stream?{query}";
+            var targetEndpoint = string.IsNullOrWhiteSpace(endpoint) ? "rest/stream" : endpoint.TrimStart('/');
+            var url = $"{_subsonicSettings.Url}/{targetEndpoint}?{query}";
             
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
 

@@ -145,7 +145,17 @@ public partial class SubsonicController : ControllerBase
     [HttpGet, HttpPost]
     [Route("rest/stream")]
     [Route("rest/stream.view")]
-    public async Task<IActionResult> Stream()
+    public async Task<IActionResult> Stream() => await DeliverMediaAsync(isDownload: false);
+
+    /// <summary>
+    /// Downloads a song file on-the-fly if needed (Subsonic download endpoint).
+    /// </summary>
+    [HttpGet, HttpPost]
+    [Route("rest/download")]
+    [Route("rest/download.view")]
+    public async Task<IActionResult> Download() => await DeliverMediaAsync(isDownload: true);
+
+    private async Task<IActionResult> DeliverMediaAsync(bool isDownload)
     {
         var parameters = await ExtractAllParameters();
         var id = parameters.GetValueOrDefault("id", "");
@@ -156,6 +166,7 @@ public partial class SubsonicController : ControllerBase
         }
 
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(id);
+        var relayEndpoint = isDownload ? "rest/download" : "rest/stream";
 
         if (!isExternal)
         {
@@ -166,7 +177,7 @@ public partial class SubsonicController : ControllerBase
                 await QueueQualityUpgradeAsync(id);
             }
 
-            return await _proxyService.RelayStreamAsync(parameters, HttpContext.RequestAborted);
+            return await _proxyService.RelayStreamAsync(parameters, HttpContext.RequestAborted, relayEndpoint);
         }
 
         // Serve an already-owned copy from the library instead of re-downloading. A copy
@@ -180,7 +191,7 @@ public partial class SubsonicController : ControllerBase
             }
 
             parameters["id"] = ownedSongId;
-            return await _proxyService.RelayStreamAsync(parameters, HttpContext.RequestAborted);
+            return await _proxyService.RelayStreamAsync(parameters, HttpContext.RequestAborted, relayEndpoint);
         }
 
         // Otherwise download from the provider and stream (quality upgrade logic applies)
@@ -202,7 +213,8 @@ public partial class SubsonicController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { error = $"Failed to stream: {ex.Message}" });
+            var actionName = isDownload ? "download" : "stream";
+            return StatusCode(500, new { error = $"Failed to {actionName}: {ex.Message}" });
         }
     }
 
