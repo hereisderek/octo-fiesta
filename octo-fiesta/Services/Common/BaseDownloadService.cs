@@ -28,7 +28,10 @@ public abstract class BaseDownloadService : IDownloadService
     protected readonly ILogger Logger;
     private readonly IServiceProvider _serviceProvider;
 
-    protected readonly string DownloadPath;
+    // A property, not a constructor field, so ProviderName is never read while a derived
+    // instance is still being built.
+    protected string DownloadPath => DownloadPathResolver.GetProviderPath(Configuration, ProviderName);
+
     protected readonly string CachePath;
 
     protected readonly Dictionary<string, DownloadInfo> ActiveDownloads = new();
@@ -110,6 +113,7 @@ public abstract class BaseDownloadService : IDownloadService
         _serviceProvider = serviceProvider;
         Logger = logger;
 
+<<<<<<< HEAD
         // Optional per-provider override (e.g. AppleMusic__DownloadPath), checked before the
         // shared Library:DownloadPath - lets a provider like Apple Music (via alacarte) resolve
         // downloads under its own tool's library folder instead. IConfiguration keys are
@@ -117,12 +121,9 @@ public abstract class BaseDownloadService : IDownloadService
         // PascalCase env var section ("AppleMusic") without any extra mapping.
         var providerDownloadPath = configuration[$"{ProviderName}:DownloadPath"];
         DownloadPath = providerDownloadPath ?? configuration["Library:DownloadPath"] ?? "./downloads";
+=======
+>>>>>>> upstream/dev
         CachePath = PathHelper.GetCachePath();
-
-        if (!Directory.Exists(DownloadPath))
-        {
-            Directory.CreateDirectory(DownloadPath);
-        }
 
         if (!Directory.Exists(CachePath))
         {
