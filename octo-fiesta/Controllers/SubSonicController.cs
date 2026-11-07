@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using System.Xml.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Options;
 using octo_fiesta.Models.Domain;
 using octo_fiesta.Models.Settings;
@@ -197,6 +198,7 @@ public partial class SubsonicController : ControllerBase
         // Otherwise download from the provider and stream (quality upgrade logic applies)
         try
         {
+<<<<<<< HEAD
             var externalCoverArtService = GetExternalCoverArtService();
             if (externalCoverArtService != null)
             {
@@ -209,6 +211,14 @@ public partial class SubsonicController : ControllerBase
                 _hostApplicationLifetime.ApplicationStopping);
 
             var (downloadStream, filePath) = await _downloadService.DownloadAndStreamAsync(provider!, externalId!, cancellationTokenSource.Token);
+=======
+            // The download is deliberately not tied to RequestAborted. Nothing is sent to the
+            // client until the file is complete, so a client that gives up waiting would kill
+            // the download, drop the partial file, and restart from zero on every retry. Only
+            // application shutdown cancels it.
+            var (downloadStream, filePath) = await _downloadService.DownloadAndStreamAsync(
+                provider!, externalId!, _hostApplicationLifetime.ApplicationStopping);
+>>>>>>> upstream/dev
             return File(downloadStream, GetContentType(filePath), enableRangeProcessing: true);
         }
         catch (Exception ex)
@@ -1813,6 +1823,50 @@ public partial class SubsonicController : ControllerBase
             }
 
             var contentType = result.ContentType ?? "application/xml; charset=utf-8";
+            // Navidrome supports playbackReport, but external IDs have no Navidrome record
+            // until a download is indexed. Do not advertise an extension the proxy cannot
+            // honor for every song; clients still use the standard scrobble endpoint.
+            if (endpoint.Equals("rest/getOpenSubsonicExtensions", StringComparison.OrdinalIgnoreCase) ||
+                endpoint.Equals("rest/getOpenSubsonicExtensions.view", StringComparison.OrdinalIgnoreCase))
+            {
+                var isJsonp = contentType.Contains("javascript", StringComparison.OrdinalIgnoreCase) ||
+                    contentType.Contains("jsonp", StringComparison.OrdinalIgnoreCase);
+                if (isJsonp || contentType.Contains("json", StringComparison.OrdinalIgnoreCase))
+                {
+                    var body = Encoding.UTF8.GetString(result.Body);
+                    var jsonStart = 0;
+                    var jsonEnd = body.Length;
+                    if (isJsonp)
+                    {
+                        jsonStart = body.IndexOf('(') + 1;
+                        jsonEnd = body.LastIndexOf(')');
+                        if (jsonStart == 0 || jsonEnd <= jsonStart)
+                        {
+                            return File(result.Body, contentType);
+                        }
+                    }
+
+                    var response = JsonNode.Parse(body[jsonStart..jsonEnd])!;
+                    if (response["subsonic-response"]?["openSubsonicExtensions"] is JsonArray extensions)
+                    {
+                        for (var i = extensions.Count - 1; i >= 0; i--)
+                        {
+                            if (extensions[i]?["name"]?.GetValue<string>() == "playbackReport")
+                            {
+                                extensions.RemoveAt(i);
+                            }
+                        }
+                    }
+                    var filteredBody = body[..jsonStart] + response.ToJsonString() + body[jsonEnd..];
+                    return File(Encoding.UTF8.GetBytes(filteredBody), contentType);
+                }
+
+                var xml = XDocument.Parse(Encoding.UTF8.GetString(result.Body));
+                xml.Root?.Elements().Where(e => e.Name.LocalName == "openSubsonicExtensions" &&
+                    (string?)e.Attribute("name") == "playbackReport").Remove();
+                return File(Encoding.UTF8.GetBytes(xml.ToString(SaveOptions.DisableFormatting)), contentType);
+            }
+
             return File(result.Body, contentType);
         }
         catch (HttpRequestException ex)
