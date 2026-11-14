@@ -19,6 +19,7 @@ public partial class LocalLibraryService : ILocalLibraryService
 {
     private readonly string _mappingFilePath;
     private readonly string _downloadDirectory;
+    private readonly IReadOnlyList<string> _libraryRoots;
     private readonly HttpClient _httpClient;
     private readonly IMusicMetadataService _metadataService;
     private readonly SubsonicSettings _subsonicSettings;
@@ -54,7 +55,9 @@ public partial class LocalLibraryService : ILocalLibraryService
         IOptions<SubsonicSettings> subsonicSettings,
         ILogger<LocalLibraryService> logger)
     {
-        _downloadDirectory = configuration["Library:DownloadPath"] ?? Path.Combine(Directory.GetCurrentDirectory(), "downloads");
+        // Shared path, so a per-provider override does not split the mapping registry in two.
+        _downloadDirectory = DownloadPathResolver.GetSharedPath(configuration);
+        _libraryRoots = DownloadPathResolver.GetAllRoots(configuration);
         _mappingFilePath = Path.Combine(_downloadDirectory, ".mappings.json");
         _httpClient = httpClientFactory.CreateClient();
         _metadataService = metadataService;
@@ -131,12 +134,10 @@ public partial class LocalLibraryService : ILocalLibraryService
             var mappings = await LoadMappingsAsync();
             mappings.TryGetValue($"{externalProvider}:{externalId}", out var mapping);
 
-            string? title;
-            string? artist;
+            TrackInfo external;
             if (mapping != null)
             {
-                title = mapping.Title;
-                artist = mapping.Artist;
+                external = new TrackInfo(mapping.Title, mapping.Artist);
             }
             else
             {
@@ -146,18 +147,19 @@ public partial class LocalLibraryService : ILocalLibraryService
                     return matches;
                 }
 
-                title = externalSong.Title;
-                artist = externalSong.Artist;
+                external = new TrackInfo(externalSong.Title, externalSong.Artist, externalSong.Duration, externalSong.Isrc);
             }
 
-            var queryText = string.Join(" ", new[] { artist, title });
+            // Edition labels ("Album Version", "Explicit") and featured artists are left out of
+            // the query: Subsonic servers match every term, and library tags often lack them.
+            var queryText = string.Join(" ", new[] { TrackMatcher.PrimaryArtist(external.Artist), TrackMatcher.CleanTitle(external.Title) });
             if (string.IsNullOrWhiteSpace(queryText))
             {
                 return matches;
             }
 
             var authQuery = BuildAuthQuery(_subsonicUserCredentials);
-            var searchUrl = $"{_subsonicSettings.Url}/rest/search3?f=json&songCount=10&albumCount=0&artistCount=0&query={Uri.EscapeDataString(queryText)}{authQuery}";
+            var searchUrl = $"{_subsonicSettings.Url}/rest/search3?f=json&songCount=20&albumCount=0&artistCount=0&query={Uri.EscapeDataString(queryText)}{authQuery}";
 
             var response = await _httpClient.GetAsync(searchUrl);
             if (!response.IsSuccessStatusCode)
@@ -177,6 +179,7 @@ public partial class LocalLibraryService : ILocalLibraryService
                 return matches;
             }
 
+<<<<<<< HEAD
             var titleKey = StringNormalizer.CreateSongTitleDedupeKey(title);
             var artistKey = StringNormalizer.CreateComparisonKey(artist);
 
@@ -188,10 +191,14 @@ public partial class LocalLibraryService : ILocalLibraryService
                 var titleMatches = !string.IsNullOrEmpty(titleKey) && titleKey == candidateTitleKey;
                 var artistMatches = !string.IsNullOrEmpty(artistKey) && artistKey == candidateArtistKey;
 
+=======
+            foreach (var songElement in EnumerateSongs(songNode))
+            {
+>>>>>>> upstream/dev
                 // Require both title and artist. Matching on title+album alone let a different
                 // recording from a compilation (same title, different artist) pass as "owned",
                 // and that wrong file then got persisted into the M3U and the library.
-                if (titleMatches && artistMatches)
+                if (TrackMatcher.IsMatch(external, ReadTrackInfo(songElement)))
                 {
                     matches.Add(songElement.Clone());
                 }
@@ -207,7 +214,8 @@ public partial class LocalLibraryService : ILocalLibraryService
 
     /// <summary>
     /// Translates a Subsonic search hit's (tag-derived) path into the real on-disk path inside
-    /// our download directory, or null if the file isn't there (e.g. a stale "ghost" entry).
+    /// one of our download directories, or null if the file isn't there (e.g. a stale "ghost"
+    /// entry).
     /// Navidrome's reported path can diverge from the file Octo actually wrote: tags may contain
     /// characters Octo sanitizes on disk (e.g. ':' -> '_'), and the name can carry a synthetic
     /// disc prefix ("01-05 - X") the real file lacks ("05 - X"). Rebuild segment by segment with
@@ -232,24 +240,27 @@ public partial class LocalLibraryService : ILocalLibraryService
             return null;
         }
 
-        var directory = _downloadDirectory;
-        for (var p = 0; p < parts.Length - 1; p++)
-        {
-            directory = Path.Combine(directory, PathHelper.SanitizeFolderName(parts[p]));
-        }
-
         var rawName = parts[^1];
         var extension = Path.GetExtension(rawName);
         var stem = Path.GetFileNameWithoutExtension(rawName);
         var discStripped = System.Text.RegularExpressions.Regex.Replace(stem, @"^\d+-", "");
         var candidateStems = stem == discStripped ? new[] { stem } : new[] { stem, discStripped };
 
-        foreach (var candidateStem in candidateStems)
+        foreach (var root in _libraryRoots)
         {
-            var candidatePath = Path.Combine(directory, PathHelper.SanitizeFileName(candidateStem) + extension);
-            if (File.Exists(candidatePath))
+            var directory = root;
+            for (var p = 0; p < parts.Length - 1; p++)
             {
-                return candidatePath;
+                directory = Path.Combine(directory, PathHelper.SanitizeFolderName(parts[p]));
+            }
+
+            foreach (var candidateStem in candidateStems)
+            {
+                var candidatePath = Path.Combine(directory, PathHelper.SanitizeFileName(candidateStem) + extension);
+                if (File.Exists(candidatePath))
+                {
+                    return candidatePath;
+                }
             }
         }
 
@@ -462,6 +473,51 @@ public partial class LocalLibraryService : ILocalLibraryService
 
         await WaitForScanToFinishAsync(cancellationToken);
         return await GetLocalIdForExternalSongAsync(externalProvider, externalId);
+    }
+
+    /// <summary>
+    /// Reads the tags of a Subsonic song element, including the OpenSubsonic "artists" and
+    /// "isrc" arrays when the server provides them.
+    /// </summary>
+    private static TrackInfo ReadTrackInfo(JsonElement song)
+    {
+        string? GetString(string name) =>
+            song.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String ? el.GetString() : null;
+
+        int? duration = song.TryGetProperty("duration", out var durationEl) && durationEl.ValueKind == JsonValueKind.Number &&
+                        durationEl.TryGetInt32(out var seconds)
+            ? seconds
+            : null;
+
+        var artists = new List<string>();
+        if (song.TryGetProperty("artists", out var artistsEl) && artistsEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var a in artistsEl.EnumerateArray())
+            {
+                if (a.ValueKind == JsonValueKind.Object && a.TryGetProperty("name", out var nameEl) &&
+                    nameEl.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(nameEl.GetString()))
+                {
+                    artists.Add(nameEl.GetString()!);
+                }
+            }
+        }
+
+        var isrcs = new List<string>();
+        if (song.TryGetProperty("isrc", out var isrcEl))
+        {
+            if (isrcEl.ValueKind == JsonValueKind.Array)
+            {
+                isrcs.AddRange(isrcEl.EnumerateArray()
+                    .Where(i => i.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(i.GetString()))
+                    .Select(i => i.GetString()!));
+            }
+            else if (isrcEl.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(isrcEl.GetString()))
+            {
+                isrcs.Add(isrcEl.GetString()!);
+            }
+        }
+
+        return new TrackInfo(GetString("title"), GetString("artist"), duration, ArtistNames: artists, IsrcList: isrcs);
     }
 
     private static IEnumerable<JsonElement> EnumerateSongs(JsonElement songNode)
