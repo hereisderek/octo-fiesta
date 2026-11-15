@@ -28,11 +28,15 @@ public abstract class BaseDownloadService : IDownloadService
     protected readonly ILogger Logger;
     private readonly IServiceProvider _serviceProvider;
 
-    protected readonly string DownloadPath;
+    // A property, not a constructor field, so ProviderName is never read while a derived
+    // instance is still being built.
+    protected string DownloadPath => DownloadPathResolver.GetProviderPath(Configuration, ProviderName);
+
     protected readonly string CachePath;
 
-    protected readonly Dictionary<string, DownloadInfo> ActiveDownloads = new();
-    protected readonly SemaphoreSlim DownloadLock = new(1, 1);
+    protected readonly ConcurrentDictionary<string, DownloadInfo> ActiveDownloads = new();
+    protected readonly SemaphoreSlim DownloadLock;
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _songLocks = new();
 
     // Small in-memory cache to avoid repeated metadata/network lookups when searching for cached files.
     // Key: "{provider}|{externalId}" -> (path or null, expiry)
@@ -110,6 +114,7 @@ public abstract class BaseDownloadService : IDownloadService
         _serviceProvider = serviceProvider;
         Logger = logger;
 
+<<<<<<< HEAD
         // Optional per-provider override (e.g. AppleMusic__DownloadPath), checked before the
         // shared Library:DownloadPath - lets a provider like Apple Music (via alacarte) resolve
         // downloads under its own tool's library folder instead. IConfiguration keys are
@@ -118,11 +123,12 @@ public abstract class BaseDownloadService : IDownloadService
         var providerDownloadPath = configuration[$"{ProviderName}:DownloadPath"];
         DownloadPath = providerDownloadPath ?? configuration["Library:DownloadPath"] ?? "./downloads";
         CachePath = PathHelper.GetCachePath();
+=======
+        var maxConcurrentDownloads = Math.Clamp(SubsonicSettings.MaxConcurrentDownloads, 1, SubsonicSettings.MaxConcurrentDownloadsLimit);
+        DownloadLock = new(maxConcurrentDownloads, maxConcurrentDownloads);
+>>>>>>> upstream/dev
 
-        if (!Directory.Exists(DownloadPath))
-        {
-            Directory.CreateDirectory(DownloadPath);
-        }
+        CachePath = PathHelper.GetCachePath();
 
         if (!Directory.Exists(CachePath))
         {
@@ -522,8 +528,20 @@ public abstract class BaseDownloadService : IDownloadService
         // In Cache mode, downloads go to cache unless forcePermanent is set (used by star album/playlist)
         var isCache = SubsonicSettings.StorageMode == StorageMode.Cache && !forcePermanent;
 
-        // Acquire lock BEFORE checking existence to prevent race conditions with concurrent requests
-        await DownloadLock.WaitAsync(cancellationToken);
+        // A second request for the same song waits for the first one, then finds the downloaded file.
+        // The song lock is taken before a download slot so waiting requests don't hold a slot.
+        var songLock = _songLocks.GetOrAdd(songId, _ => new SemaphoreSlim(1, 1));
+        await songLock.WaitAsync(cancellationToken);
+        try
+        {
+            // Acquire lock BEFORE checking existence to prevent race conditions with concurrent requests
+            await DownloadLock.WaitAsync(cancellationToken);
+        }
+        catch
+        {
+            songLock.Release();
+            throw;
+        }
 
         // Tell other concurrent tasks we are started downloading routine
         // and keep reference to it for easy access
@@ -732,6 +750,7 @@ public abstract class BaseDownloadService : IDownloadService
                     // Trigger a Subsonic library rescan (with debounce)
                     _ = Task.Run(async () =>
                     {
+<<<<<<< HEAD
                         try
                         {
                             await LocalLibraryService.TriggerLibraryScanAsync();
@@ -753,10 +772,30 @@ public abstract class BaseDownloadService : IDownloadService
                         DownloadRemainingAlbumTracksInBackground(externalProvider, albumExternalId, externalId);
                     }
                 }
+=======
+                        await LocalLibraryService.TriggerLibraryScanAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogWarning(ex, "Failed to trigger library scan after download");
+                    }
+                });
+>>>>>>> upstream/dev
             }
             else
             {
                 Logger.LogInformation("Cache mode: skipping library registration and scan");
+            }
+
+            // If download mode is Album and triggering is enabled, start background download of remaining tracks
+            if (triggerAlbumDownload && SubsonicSettings.DownloadMode == DownloadMode.Album && !string.IsNullOrEmpty(song.AlbumId))
+            {
+                var albumExternalId = ExtractExternalIdFromAlbumId(song.AlbumId);
+                if (!string.IsNullOrEmpty(albumExternalId))
+                {
+                    Logger.LogInformation("Download mode is Album, triggering background download for album {AlbumId}", albumExternalId);
+                    DownloadRemainingAlbumTracksInBackground(externalProvider, albumExternalId, externalId);
+                }
             }
 
             Logger.LogInformation("Download completed: {Path}", localPath);
@@ -810,6 +849,7 @@ public abstract class BaseDownloadService : IDownloadService
             }
 
             DownloadLock.Release();
+            songLock.Release();
         }
     }
 
@@ -1325,6 +1365,8 @@ public abstract class BaseDownloadService : IDownloadService
 
             if (!string.IsNullOrEmpty(song.ReleaseType))
                 tagFile.Tag.MusicBrainzReleaseType = song.ReleaseType;
+
+            NativeMetadataTags.Write(tagFile, song);
 
             var comments = new List<string>();
             if (!string.IsNullOrEmpty(song.Isrc))

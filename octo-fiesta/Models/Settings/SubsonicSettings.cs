@@ -18,7 +18,7 @@ public enum DownloadMode
 }
 
 /// <summary>
-/// Explicit content filter mode for Deezer tracks
+/// Explicit content filter mode
 /// </summary>
 public enum ExplicitFilter
 {
@@ -37,7 +37,10 @@ public enum ExplicitFilter
     /// Only show clean content (explicit_content_lyrics == 0 or 3)
     /// Excludes tracks with explicit_content_lyrics == 1
     /// </summary>
-    CleanOnly
+    CleanOnly,
+
+    /// <summary>Rank explicit Qobuz search results first, retaining fallback results.</summary>
+    PreferExplicit
 }
 
 /// <summary>
@@ -124,8 +127,8 @@ public partial class SubsonicSettings
     /// <summary>
     /// Explicit content filter mode (default: All)
     /// Environment variable: EXPLICIT_FILTER
-    /// Values: "All", "ExplicitOnly", "CleanOnly"
-    /// Note: Only works with Deezer
+    /// Values: "All", "ExplicitOnly", "CleanOnly", "PreferExplicit"
+    /// PreferExplicit ranks Qobuz search results; other providers retain their default order.
     /// </summary>
     public ExplicitFilter ExplicitFilter { get; set; } = ExplicitFilter.All;
     
@@ -137,7 +140,19 @@ public partial class SubsonicSettings
     public DownloadMode DownloadMode { get; set; } = DownloadMode.Track;
     
     /// <summary>
+<<<<<<< HEAD
     /// Music service(s) to use (default: Deezer)
+=======
+    /// Defines how many downloads can concurrently run (default: 1, max: 5).
+    /// Environment variable: MAX_CONCURRENT_DOWNLOADS
+    /// </summary>
+    public int MaxConcurrentDownloads { get; set; } = 1;
+
+    public const int MaxConcurrentDownloadsLimit = 5;
+    
+    /// <summary>
+    /// Music service to use (default: Deezer)
+>>>>>>> upstream/dev
     /// Environment variable: MUSIC_SERVICE
     /// Values: "Deezer", "Qobuz", "Tidal", "Yandex", "GDStudio", "AppleMusic", "SquidWTF" (deprecated).
     /// Several can be combined with "," (e.g. "Deezer,Qobuz"): searches are merged and
