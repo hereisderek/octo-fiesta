@@ -85,6 +85,8 @@ builder.Services.Configure<LyricsSettings>(
 builder.Services.Configure<AppleMusicSettings>(
     builder.Configuration.GetSection("AppleMusic"));
 
+DownloadPathResolver.EnsureRootsExist(builder.Configuration);
+
 // Get the configured music service from bound settings (to respect default values)
 var subsonicSettings = new SubsonicSettings();
 builder.Configuration.GetSection("Subsonic").Bind(subsonicSettings);
@@ -98,6 +100,7 @@ builder.Services.AddSingleton<ILocalLibraryService, LocalLibraryService>();
 builder.Services.AddSingleton<SubsonicRequestParser>();
 builder.Services.AddSingleton<SubsonicResponseBuilder>();
 builder.Services.AddSingleton<SubsonicModelMapper>();
+builder.Services.AddSingleton<ExternalCoverArtService>();
 builder.Services.AddScoped<SubsonicProxyService>();
 
 // Lyrics lookup (LRCLIB). Always registered; gated at runtime by Lyrics:Enabled.
