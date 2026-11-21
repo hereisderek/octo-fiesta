@@ -10,10 +10,17 @@ using octo_fiesta.Services;
 namespace octo_fiesta.Tests;
 
 /// <summary>
+<<<<<<< HEAD
 /// Covers the "{ProviderName}:DownloadPath" override (e.g. AppleMusic__DownloadPath) that lets a
 /// single provider resolve downloads under its own folder instead of the shared
 /// "Library:DownloadPath" - needed when that provider's own tool (alacarte, for Apple Music)
 /// owns a library folder octo-fiesta doesn't otherwise write into. No provider opt-in is
+=======
+/// Covers the "{ProviderName}:DownloadPath" override (e.g. Deezer__DownloadPath) that lets a
+/// single provider resolve downloads under its own folder instead of the shared
+/// "Library:DownloadPath" - e.g. when that provider
+/// must write into a library folder octo-fiesta doesn't otherwise write into. No provider opt-in is
+>>>>>>> upstream/dev
 /// required: the lookup reuses each provider's existing (lowercase) ProviderName directly,
 /// relying on IConfiguration's case-insensitive keys to match the PascalCase env var section.
 /// </summary>
@@ -75,6 +82,7 @@ public class BaseDownloadServiceProviderPathOverrideTests : IDisposable
     public void ProviderOverrideSet_TakesPrecedenceOverSharedLibraryDownloadPath()
     {
         var service = BuildService(
+<<<<<<< HEAD
             (h, c, l, m, s, sp, lg) => new AppleMusicLikeDownloadService(h, c, l, m, s, sp, lg),
             new Dictionary<string, string?>
             {
@@ -82,6 +90,15 @@ public class BaseDownloadServiceProviderPathOverrideTests : IDisposable
                 // PascalCase, as an AppleMusic__DownloadPath env var would bind - ProviderName
                 // itself is lowercase ("applemusic"), proving the lookup is case-insensitive.
                 ["AppleMusic:DownloadPath"] = _providerPath,
+=======
+            (h, c, l, m, s, sp, lg) => new ProviderLikeDownloadService(h, c, l, m, s, sp, lg),
+            new Dictionary<string, string?>
+            {
+                ["Library:DownloadPath"] = _sharedPath,
+                // PascalCase, as an Deezer__DownloadPath env var would bind - ProviderName
+                // itself is lowercase ("deezer"), proving the lookup is case-insensitive.
+                ["Deezer:DownloadPath"] = _providerPath,
+>>>>>>> upstream/dev
             });
 
         Assert.Equal(_providerPath, service.EffectiveDownloadPath);
@@ -90,13 +107,21 @@ public class BaseDownloadServiceProviderPathOverrideTests : IDisposable
     [Fact]
     public void ProviderOverrideConfiguredForADifferentProvider_IsIgnored()
     {
+<<<<<<< HEAD
         // AppleMusic's own override must not leak into a provider that didn't ask for one.
+=======
+        // Deezer's own override must not leak into a provider that didn't ask for one.
+>>>>>>> upstream/dev
         var service = BuildService(
             (h, c, l, m, s, sp, lg) => new PlainProviderDownloadService(h, c, l, m, s, sp, lg),
             new Dictionary<string, string?>
             {
                 ["Library:DownloadPath"] = _sharedPath,
+<<<<<<< HEAD
                 ["AppleMusic:DownloadPath"] = _providerPath,
+=======
+                ["Deezer:DownloadPath"] = _providerPath,
+>>>>>>> upstream/dev
             });
 
         Assert.Equal(_sharedPath, service.EffectiveDownloadPath);
@@ -143,8 +168,13 @@ public class BaseDownloadServiceProviderPathOverrideTests : IDisposable
         protected override string ProviderName => "fake";
     }
 
+<<<<<<< HEAD
     // Mirrors AppleMusicDownloadService's real ProviderName.
     private sealed class AppleMusicLikeDownloadService(
+=======
+    // Mirrors a real provider (Deezer).
+    private sealed class ProviderLikeDownloadService(
+>>>>>>> upstream/dev
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration,
         ILocalLibraryService localLibraryService,
@@ -154,6 +184,10 @@ public class BaseDownloadServiceProviderPathOverrideTests : IDisposable
         Microsoft.Extensions.Logging.ILogger logger)
         : FakeDownloadServiceBase(httpClientFactory, configuration, localLibraryService, metadataService, subsonicSettings, serviceProvider, logger)
     {
+<<<<<<< HEAD
         protected override string ProviderName => "applemusic";
+=======
+        protected override string ProviderName => "deezer";
+>>>>>>> upstream/dev
     }
 }
