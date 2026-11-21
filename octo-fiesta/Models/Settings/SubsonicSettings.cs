@@ -18,7 +18,7 @@ public enum DownloadMode
 }
 
 /// <summary>
-/// Explicit content filter mode for Deezer tracks
+/// Explicit content filter mode
 /// </summary>
 public enum ExplicitFilter
 {
@@ -37,7 +37,26 @@ public enum ExplicitFilter
     /// Only show clean content (explicit_content_lyrics == 0 or 3)
     /// Excludes tracks with explicit_content_lyrics == 1
     /// </summary>
-    CleanOnly
+    CleanOnly,
+
+    /// <summary>Rank explicit Qobuz search results first, retaining fallback results.</summary>
+    PreferExplicit
+}
+
+/// <summary>
+/// Which provider image is served as the cover of external albums and songs
+/// </summary>
+public enum CoverArtSize
+{
+    /// <summary>
+    /// The provider's display-size image (500-640 px): light and quick to load
+    /// </summary>
+    Display,
+
+    /// <summary>
+    /// The largest image the provider has (1000 px and up; a Qobuz original can weigh several MB)
+    /// </summary>
+    Large
 }
 
 /// <summary>
@@ -124,8 +143,8 @@ public partial class SubsonicSettings
     /// <summary>
     /// Explicit content filter mode (default: All)
     /// Environment variable: EXPLICIT_FILTER
-    /// Values: "All", "ExplicitOnly", "CleanOnly"
-    /// Note: Only works with Deezer
+    /// Values: "All", "ExplicitOnly", "CleanOnly", "PreferExplicit"
+    /// PreferExplicit ranks Qobuz search results; other providers retain their default order.
     /// </summary>
     public ExplicitFilter ExplicitFilter { get; set; } = ExplicitFilter.All;
     
@@ -137,7 +156,28 @@ public partial class SubsonicSettings
     public DownloadMode DownloadMode { get; set; } = DownloadMode.Track;
     
     /// <summary>
+<<<<<<< HEAD
     /// Music service(s) to use (default: Deezer)
+=======
+    /// Defines how many downloads can concurrently run (default: 1, max: 5).
+    /// With StreamWhileDownloading, the track being played does not wait for a slot.
+    /// Environment variable: MAX_CONCURRENT_DOWNLOADS
+    /// </summary>
+    public int MaxConcurrentDownloads { get; set; } = 1;
+
+    public const int MaxConcurrentDownloadsLimit = 5;
+
+    /// <summary>
+    /// Size of the covers served for external albums and songs (default: Display)
+    /// Environment variable: COVER_ART_SIZE
+    /// Values: "Display" (500-640 px), "Large" (the provider's largest image)
+    /// Downloads always embed the largest image, whatever this says.
+    /// </summary>
+    public CoverArtSize CoverArtSize { get; set; } = CoverArtSize.Display;
+    
+    /// <summary>
+    /// Music service to use (default: Deezer)
+>>>>>>> upstream/dev
     /// Environment variable: MUSIC_SERVICE
     /// Values: "Deezer", "Qobuz", "Tidal", "Yandex", "GDStudio", "AppleMusic", "SquidWTF" (deprecated).
     /// Several can be combined with "," (e.g. "Deezer,Qobuz"): searches are merged and
@@ -206,6 +246,7 @@ public partial class SubsonicSettings
     public bool AutoUpgradeQuality { get; set; } = false;
 
     /// <summary>
+<<<<<<< HEAD
     /// What to do when a download would land on a file name that already exists (default: false)
     /// Environment variable: ALLOW_BITRATE_UPGRADE
     /// false: skip the download and keep the existing file.
@@ -213,6 +254,26 @@ public partial class SubsonicSettings
     /// and replace the file once the download completes.
     /// </summary>
     public bool AllowBitrateUpgrade { get; set; } = false;
+=======
+    /// Play a track that is not downloaded yet while it downloads (default: false)
+    /// Environment variable: STREAM_WHILE_DOWNLOADING
+    /// Works with providers that announce the file size: Deezer, Qobuz, Yandex, and Tidal at LOSSLESS.
+    /// The track being played then skips the MaxConcurrentDownloads queue, so skipping through
+    /// tracks downloads them side by side. The file sent during the download, and for a while
+    /// after it so seeking stays consistent, has no tags. A seek past what is downloaded waits
+    /// for that part to arrive.
+    /// </summary>
+    public bool StreamWhileDownloading { get; set; } = false;
+
+    /// <summary>
+    /// Seconds of audio downloaded before playback of a track that is not downloaded yet
+    /// starts (default: 3). Playback follows the download from then on; this head start
+    /// keeps the beginning from stuttering while the provider connection gets up to speed.
+    /// Only used with StreamWhileDownloading.
+    /// Environment variable: STREAM_PREBUFFER_SECONDS. 0 starts as soon as the format is known.
+    /// </summary>
+    public double StreamPrebufferSeconds { get; set; } = 3;
+>>>>>>> upstream/dev
     
     /// <summary>
     /// Template for organizing downloaded files into folders (default: {artist}/{album}/{track} - {title})
