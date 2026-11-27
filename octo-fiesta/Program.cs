@@ -85,6 +85,8 @@ builder.Services.Configure<LyricsSettings>(
 builder.Services.Configure<AppleMusicSettings>(
     builder.Configuration.GetSection("AppleMusic"));
 
+DownloadPathResolver.EnsureRootsExist(builder.Configuration);
+
 // Get the configured music service from bound settings (to respect default values)
 var subsonicSettings = new SubsonicSettings();
 builder.Configuration.GetSection("Subsonic").Bind(subsonicSettings);
@@ -98,6 +100,7 @@ builder.Services.AddSingleton<ILocalLibraryService, LocalLibraryService>();
 builder.Services.AddSingleton<SubsonicRequestParser>();
 builder.Services.AddSingleton<SubsonicResponseBuilder>();
 builder.Services.AddSingleton<SubsonicModelMapper>();
+builder.Services.AddSingleton<ExternalCoverArtService>();
 builder.Services.AddScoped<SubsonicProxyService>();
 
 // Lyrics lookup (LRCLIB). Always registered; gated at runtime by Lyrics:Enabled.
@@ -234,6 +237,9 @@ if (enableExternalPlaylists && activeServices.Any(s =>
     builder.Services.AddSingleton<PlaylistSyncService>();
 }
 
+// Read by the Deezer services and validator, whichever role Deezer has
+builder.Services.AddSingleton<DeezerAccount>();
+
 // Startup validation - register validators
 builder.Services.AddSingleton<IStartupValidator, SubsonicStartupValidator>();
 builder.Services.AddSingleton<IStartupValidator, DeezerStartupValidator>();
@@ -313,7 +319,8 @@ foreach (var url in app.Urls)
 
 Console.WriteLine();
 
-// Wait for shutdown
+// Wait for shutdown, then dispose the services as app.Run() would
 app.WaitForShutdown();
+await app.DisposeAsync();
 
 return 0;

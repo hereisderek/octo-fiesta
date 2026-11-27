@@ -118,7 +118,7 @@ public class TidalMetadataServiceTests : IDisposable
         var song = Assert.Single(await CreateService(handler).SearchSongsAsync("get lucky"));
 
         Assert.Equal(
-            "https://resources.tidal.com/images/11111111/2222/3333/4444/555555555555/320x320.jpg",
+            "https://resources.tidal.com/images/11111111/2222/3333/4444/555555555555/640x640.jpg",
             song.CoverArtUrl);
         Assert.Equal(
             "https://resources.tidal.com/images/11111111/2222/3333/4444/555555555555/1280x1280.jpg",
@@ -151,6 +151,24 @@ public class TidalMetadataServiceTests : IDisposable
         var handler = new TidalStubHandler().Respond("/search", """{"status":401}""", HttpStatusCode.Unauthorized);
 
         Assert.Empty(await CreateService(handler).SearchSongsAsync("query"));
+    }
+
+    [Theory]
+    [InlineData(ExplicitFilter.All)]
+    [InlineData(ExplicitFilter.PreferExplicit)]
+    public async Task QobuzPreferenceKeepsTidalSearchOrderAndAdvisory(ExplicitFilter filter)
+    {
+        var explicitTrack = TrackJson.Replace("77712242", "77712243").Replace("\"explicit\": false", "\"explicit\": true");
+        var response = "{\"tracks\":{\"items\":[" + TrackJson + "," + explicitTrack + "]}}";
+        var handler = new TidalStubHandler().Respond("/search", response);
+        var songs = await CreateService(handler, new SubsonicSettings { ExplicitFilter = filter }).SearchSongsAsync("get lucky");
+        Assert.Equal(new[] { "77712242", "77712243" }, songs.Select(s => s.ExternalId));
+        Assert.Equal(new int?[] { 0, 1 }, songs.Select(s => s.ExplicitContentLyrics));
+        Assert.All(songs, song => {
+            Assert.Equal("USQX91300108", song.Isrc);
+            Assert.Equal("2013 Daft Life Limited", song.Copyright);
+            Assert.Null(song.IsExplicit);
+        });
     }
 
     #endregion
@@ -191,6 +209,37 @@ public class TidalMetadataServiceTests : IDisposable
         var song = Assert.Single(album.Songs);
         Assert.Equal("Daft Punk", song.AlbumArtist);
         Assert.Equal("ext-tidal-album-77712233", song.AlbumId);
+    }
+
+    [Fact]
+    public async Task GetAlbumByBarcodeAsync_PicksTheAlbumWhoseUpcMatches()
+    {
+        var handler = new TidalStubHandler()
+            .Respond("/search", """
+                {
+                  "albums": {
+                    "items": [
+                      { "id": 11111111, "title": "Other edition", "upc": "886443927094" },
+                      { "id": 77712233, "title": "Random Access Memories", "upc": "0886443927087" }
+                    ]
+                  }
+                }
+                """)
+            .Respond("/albums/77712233/items", """{ "items": [] }""")
+            .Respond("/albums/77712233", """{ "id": 77712233, "title": "Random Access Memories" }""");
+
+        var album = await CreateService(handler).GetAlbumByBarcodeAsync("886443927087");
+
+        Assert.Equal("ext-tidal-album-77712233", album!.Id);
+    }
+
+    [Fact]
+    public async Task GetAlbumByBarcodeAsync_WhenNoUpcMatches_ReturnsNull()
+    {
+        var handler = new TidalStubHandler()
+            .Respond("/search", """{ "albums": { "items": [ { "id": 1, "upc": "886443927094" } ] } }""");
+
+        Assert.Null(await CreateService(handler).GetAlbumByBarcodeAsync("886443927087"));
     }
 
     [Fact]
