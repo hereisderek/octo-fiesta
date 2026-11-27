@@ -37,6 +37,24 @@ public class SubsonicResponseBuilder
     }
 
     /// <summary>
+    /// Creates a successful Subsonic response holding an empty element (e.g. albumInfo).
+    /// </summary>
+    public IActionResult CreateEmptyElementResponse(string format, string elementName)
+    {
+        if (format == "json")
+        {
+            return CreateJsonResponse(new Dictionary<string, object>
+            {
+                ["status"] = "ok",
+                ["version"] = SubsonicVersion,
+                [elementName] = new Dictionary<string, object>()
+            });
+        }
+
+        return CreateResponse(format, elementName, new { });
+    }
+
+    /// <summary>
     /// Creates a Subsonic error response.
     /// </summary>
     public IActionResult CreateError(string format, int code, string message)
@@ -430,6 +448,10 @@ public class SubsonicResponseBuilder
             ["displayComposer"] = ""
         };
 
+        if (!string.IsNullOrWhiteSpace(song.Isrc)) result["isrc"] = new[] { song.Isrc };
+        // "clean" means an edited version; a non-explicit flag does not establish one.
+        if (song.IsExplicit == true) result["explicitStatus"] = "explicit";
+
         // Only include coverArt if the song has a cover URL (avoids broken images for songs without covers)
         if (song.IsLocal || !string.IsNullOrEmpty(song.CoverArtUrl))
         {
@@ -456,6 +478,7 @@ public class SubsonicResponseBuilder
             ["artist"] = album.Artist ?? "",
             ["artistId"] = album.ArtistId ?? "",
             ["songCount"] = album.SongCount ?? 0,
+            ["duration"] = album.Songs?.Sum(s => s.Duration ?? 0) ?? 0,
             ["created"] = System.DateTime.UtcNow.ToString("o"),
             ["isExternal"] = !album.IsLocal,
             ["displayArtist"] = album.Artist ?? "",
@@ -588,6 +611,9 @@ public class SubsonicResponseBuilder
             songElement.Add(new XAttribute("created", created));
         }
 
+        if (!string.IsNullOrWhiteSpace(song.Isrc)) songElement.Add(new XElement(ns + "isrc", song.Isrc));
+        if (song.IsExplicit == true)
+            songElement.Add(new XAttribute("explicitStatus", "explicit"));
         return songElement;
     }
 
@@ -680,12 +706,21 @@ public class SubsonicResponseBuilder
     public IActionResult CreateTranscodeDecisionResponse(Song? song, string protocol)
     {
         string container = "mp3";
+        string codec = "mp3";
         int bitRate = 128;
         if (song != null)
         {
             var (suffix, _, br) = GetSuffixContentTypeAndBitrate(song);
+<<<<<<< HEAD
             container = br > 0 ? suffix : "mp3"; // br == 0: no file yet, the suffix is only the origin label
+=======
+            container = suffix;
+>>>>>>> upstream/dev
             bitRate = br > 0 ? br : 128;
+            // A downloaded .m4a is assumed to hold AAC; its extension can't tell FLAC-in-MP4 apart.
+            codec = string.IsNullOrEmpty(song.LocalPath) && !song.IsLocal && song.ExpectedFormat is { } expected
+                ? expected.Codec
+                : suffix == "m4a" ? "aac" : suffix;
         }
 
         return CreateJsonResponse(new
@@ -701,7 +736,7 @@ public class SubsonicResponseBuilder
                 {
                     protocol,
                     container,
-                    codec = container,
+                    codec,
                     audioChannels = 2,
                     audioBitrate = bitRate * 1000
                 }
@@ -724,6 +759,7 @@ public class SubsonicResponseBuilder
                 ".flac" => ("flac", "audio/flac", 1411),
                 ".m4a" => ("m4a", "audio/mp4", 320),
                 ".mp3" => ("mp3", "audio/mpeg", 320),
+                ".aac" => ("aac", "audio/aac", 256),
                 _ => ("mp3", "audio/mpeg", 128)
             };
         }
@@ -734,6 +770,7 @@ public class SubsonicResponseBuilder
             return ("mp3", "audio/mpeg", 128);
         }
 
+<<<<<<< HEAD
         // External track without a cached file: no real format yet, so the suffix says where it comes from,
         // e.g. "AppleMusic" or, for an aggregator with per-source ids ("apple~123"), "GDStudio-Apple".
         var origin = Enum.TryParse<octo_fiesta.Models.Settings.MusicService>(song.ExternalProvider, ignoreCase: true, out var service)
@@ -741,6 +778,18 @@ public class SubsonicResponseBuilder
         if (song.ExternalId is { } id && id.IndexOf('~') is > 0 and var tilde)
             origin += "-" + char.ToUpperInvariant(id[0]) + id[1..tilde];
         return (origin, "audio/mpeg", 0);
+=======
+        // Not downloaded yet: what the provider is expected to deliver. Clients size their
+        // buffers and pick a decoder from this, so a FLAC stream announced as 128 kbps MP3
+        // starts choppy.
+        if (song.ExpectedFormat is { } expected)
+        {
+            return (expected.Suffix, expected.ContentType, expected.BitRate);
+        }
+
+        // Providers that cannot tell
+        return ("mp3", "audio/mpeg", 128);
+>>>>>>> upstream/dev
     }
 
     private object ConvertJsonValue(JsonElement value)
